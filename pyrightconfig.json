@@ -1,0 +1,6 @@
+{
+  "pythonVersion": "3.12",
+  "venvPath": "todo-service",
+  "venv": ".venv",
+  "extraPaths": ["todo-service/src"]
+}

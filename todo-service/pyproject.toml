@@ -1,0 +1,68 @@
+[project]
+name = "todo-listercise"
+version = "0.1.0"
+description = "FastAPI todo service with feature flags"
+authors = [
+    { name = "Jonathan Barnett", email = "8984719+jbcbdse@users.noreply.github.com" }
+]
+requires-python = "==3.12.*"
+dependencies = [
+    "alembic",
+    "asyncpg",
+    "fastapi",
+    "pydantic-settings",
+    "sqlalchemy[asyncio]",
+    "structlog",
+    "uvicorn[standard]",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx",
+    "mypy",
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "testcontainers[postgres]",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812",
+    "CPY",
+    "D",
+    "EM",
+    "ISC001",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"alembic/**" = ["INP001"]
+"tests/**" = ["ARG001", "ARG002", "BLE001", "FBT001", "INP001", "PLR2004", "S101", "S607", "SLF001"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
+mypy_path = "src"
+
+[tool.pyright]
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+extraPaths = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = ["--import-mode=importlib"]
+testpaths = ["tests"]
