@@ -45,7 +45,11 @@ When off:
 - the API still stores it (so flipping the flag back does not lose data)
 - create/update ignore client-supplied priority and keep the default
 
-This is a real product flag, not a cosmetic toggle: it changes both API contract *usage* and UI. That is the point of the demo.
+This is a real product flag, not a cosmetic toggle: it changes both API contract *usage* and UI. That is the point of the demo. The SPA does not wire `priorities` yet.
+
+**Flag-gated: `completed_sparkles` (UI-only)**
+
+When on, completing a todo emits a short sparkle burst on that row. When off (or the flag row is missing), complete behaves as usual. The API does not evaluate this flag.
 
 Other flag ideas we can swap in later (same plumbing): due dates, bulk complete, “focus mode” (incomplete only).
 
@@ -67,7 +71,7 @@ Browser
                                   └─ evaluates flags from DB
 
 kind cluster
-  frontend          Deployment + Service
+  todo-ui           Deployment + Service
   todo-service      Deployment (app + Alloy sidecar) + Service
   postgres          StatefulSet + PVC + Service
   prometheus        Deployment + Service   # metrics store
@@ -89,7 +93,7 @@ One namespace, e.g. `todo-listercise`. Ingress or a simple port-forward script f
 
 **Why this shape**
 
-- Frontend and `todo-service` are separate images/services so Kubernetes and observability are real, not a single process pretending.
+- `todo-ui` and `todo-service` are separate images/services so Kubernetes and observability are real, not a single process pretending.
 - Flags live in Postgres next to app data — no extra vendor, and the flag table is itself observable.
 - Grafana is a *cluster service*, not a sidecar. The sidecar is a collector (Grafana Alloy) sitting next to the API process.
 
@@ -118,7 +122,7 @@ Keep the API boring. The interesting parts are flag evaluation, instrumentation,
 
 ### 4.2 Flag evaluation
 
-`FlagService.is_enabled("priorities")` — a class, not scattered `if`s. FastAPI `Depends()` injects `FlagService` / `TodoService`. Routers stay thin.
+`FlagService.is_enabled(FlagKey.PRIORITIES)` — a class, not scattered `if`s. FastAPI `Depends()` injects `FlagService` / `TodoService`. Routers stay thin. Flag names are a `FlagKey` StrEnum; a missing DB row evaluates to off.
 
 `GET /flags` is what the React app uses. The backend also evaluates the same flags on write so a crafted request cannot enable a gated field when the flag is off.
 
@@ -133,22 +137,19 @@ Keep the API boring. The interesting parts are flag evaluation, instrumentation,
 
 ---
 
-## 5. Frontend (React / TypeScript)
+## 5. todo-ui (React / TypeScript)
 
-Vite + React + TypeScript. Talks to the API over a relative `/api` prefix; nginx in the frontend image proxies to the backend Service so the browser never needs a cluster-internal URL.
+Vite + React + TypeScript SPA in `todo-ui/`. Inner loop: Vite on `:5173` proxies `/api` to uvicorn. Later, the kind image is static `dist/` behind nginx (not this unit).
 
-**Screens:** one page. Input to add a todo, list with complete/delete, a small “Flags” panel that shows `priorities` and lets us toggle it (calls `PUT /flags/priorities`). When the flag is on, priority controls appear without a reload (refetch flags after toggle, or poll every few seconds).
+**Screens:** one page. Add / list / complete / delete todos, plus a status filter. Completing a todo sparkles when `completed_sparkles` is on. No flag admin UI. `priorities` is not wired in the SPA yet.
 
-**Stack choices to keep thin**
+**Stack**
 
-- `fetch` + a tiny typed client, not Redux
-- TanStack Query if we want cache/refetch for free; otherwise `useState` + `useEffect` is enough
-- No component library required — a short CSS module is fine and photographs better in a demo than a stock MUI form
-
-**Discuss**
-
-- TanStack Query vs hand-rolled fetch
-- Whether the flag panel is in the app (honest demo) or we flip flags only via `kubectl` / Grafana (more “ops”) 
+- TanStack Query for todos
+- `FlagProvider` port (`isEnabled` + `subscribe`) with an HTTP adapter (`GET /api/flags`, in-memory cache + 5s poll). Swap-in later: LaunchDarkly. No OpenFeature SDK in v1. `useFlag(FlagKey.CompletedSparkles)` gates the complete sparkle.
+- Tailwind CSS v4
+- Storybook, Vitest, Playwright
+- Typed ports + React Context (constructor-style DI). Components do not `fetch`
 
 ---
 
@@ -160,26 +161,28 @@ Treat flags as a first-class concept, not an env var.
 
 ```
 flag
-  key          text primary key   -- e.g. "priorities"
+  key          text primary key   -- FlagKey value, e.g. "priorities"
   enabled      boolean not null
   description  text
   updated_at   timestamptz
 ```
 
-Seed one row: `priorities = false`.
+One row per flag. Seed `priorities = false` and `completed_sparkles = false`. Runtime code uses a `FlagKey` enum (Python StrEnum / TypeScript string enum); those values are the `key` text.
 
 **Evaluation rules**
 
 - Boolean flags only in v1 (no percentages, no targeting). The *concept* is what we need to show.
-- Backend is source of truth. Frontend never decides “is this on?” from localStorage.
+- Backend is source of truth. todo-ui never decides “is this on?” from localStorage.
+- Missing row or unknown key evaluates to off. `PUT /flags/{key}` is 404 if the row does not exist (not an upsert).
 - Flag reads are cached in-process for a few seconds so a list request does not add a second query. Cache invalidates on `PUT`.
+- todo-ui caches `GET /flags` in memory and polls every 5s so a live `PUT` shows up without a request on every render.
 
 **What we are explicitly not doing**
 
 - User targeting, gradual rollout, experiments
 - OpenFeature SDK — worth a follow-up if we want the vendor-neutral story, but it is extra surface for one boolean
 
-**Demo beat:** create todos → flip `priorities` on → priority UI appears → flip off → UI hides, data remains.
+**Demo beat:** create todos → flip `completed_sparkles` on → complete an item, sparkles → flip `priorities` on → (later) priority UI appears → flip off → UI hides, data remains.
 
 ---
 
@@ -220,7 +223,7 @@ list_item
 
 | Workload | Kind | Notes |
 |---|---|---|
-| `frontend` | Deployment, 1 replica | nginx serving the SPA + `/api` proxy |
+| `todo-ui` | Deployment, 1 replica | nginx serving the SPA + `/api` proxy |
 | `todo-service` | Deployment, 1 replica | FastAPI + Alloy sidecar |
 | `postgres` | StatefulSet, 1 replica | PVC |
 | `prometheus` | Deployment | scrape Alloy / app metrics |
@@ -229,7 +232,7 @@ list_item
 
 **Probes**
 
-- frontend: nginx `/`
+- todo-ui: nginx `/`
 - todo-service liveness: `/healthz`
 - todo-service readiness: `/readyz` (Postgres ping)
 - Alloy: its own `/ready` if we expose it
@@ -238,7 +241,7 @@ list_item
 
 - Build locally, `kind load docker-image` so we never need a registry
 - Backend: distroless or slim Python
-- Frontend: multi-stage `node` build → `nginx:alpine`
+- todo-ui: multi-stage `node` build → `nginx:alpine`
 
 **Manifests:** raw YAML in `k8s/`, Kustomize overlay `k8s/overlays/kind`. Helm is optional and probably noise for this size.
 
@@ -258,7 +261,7 @@ Three signals, one UI.
 - Metrics: request count/latency/errors (RED), plus app counters `todos_created`, `todos_completed`, `flag_evaluations`
 - Logs: structured JSON to stdout (`request_id` / `trace_id` injected)
 
-**Frontend (optional v1)**
+**todo-ui (optional v1)**
 
 - Skip browser RUM initially. If we add it later: a single page-load + fetch span via OTel browser SDK. Easy to bolt on; easy to skip for the first demo.
 
@@ -322,15 +325,15 @@ Trace → log correlation if we include `trace_id` in log lines. Loki is a nice 
 
 1. Create a todo in the UI
 2. Grafana: spike on `todos_created`, a trace named `POST /todos` with a SQL span
-3. Flip `priorities`
-4. Grafana: `flag_evaluations` / a `PUT /flags/priorities` trace
+3. Flip `completed_sparkles`, complete a todo (sparkles)
+4. Grafana: `flag_evaluations` / a `PUT /flags/completed_sparkles` trace
 
 ### 9.6 Discuss
 
 - Alloy sidecar vs cluster-level OTel Collector Deployment (sidecar is the story you asked for; a collector Deployment is more “production”)
 - Prometheus+Tempo vs Grafana Cloud (local-only wins for a laptop demo)
 - Loki or not
-- Instrument the frontend or keep telemetry server-side
+- Instrument todo-ui or keep telemetry server-side
 
 ---
 
@@ -348,7 +351,7 @@ Equivalent pieces, still the target:
 
 ```text
 make cluster     # kind create, if needed
-make images      # docker build frontend + todo-service
+make images      # docker build todo-ui + todo-service
 make load        # kind load docker-image
 make apply       # kubectl apply -k k8s/overlays/kind
 make ports       # port-forward app :8080 and grafana :3000
@@ -377,7 +380,7 @@ todo-listercise/
   README.md
   docker-compose.yml
   todo-service/     FastAPI app, Alembic, Dockerfile
-  frontend/         Vite React TS, Dockerfile   (later)
+  todo-ui/          Vite React TS, Dockerfile   (later)
   k8s/
     base/
     overlays/kind/
@@ -393,10 +396,9 @@ todo-listercise/
 
 1. `kubectl get pods -n todo-listercise` — everything Running, two containers on `todo-service` (app + alloy)
 2. Open the app, add/complete a todo
-3. Show the flag panel, enable `priorities`, set a priority, filter
-4. Disable the flag — priority UI gone, todos still there
-5. Grafana dashboard + one trace drilled into the Postgres span
-6. If asked “how would you do this for real?”: managed Postgres, a real flag service or OpenFeature, Ingress + TLS, auth, HPA, Grafana Cloud or a proper LGTM stack
+3. Complete a todo; `PUT /flags/completed_sparkles` on; complete another and see sparkles. `priorities` still API-only.
+4. Grafana dashboard + one trace drilled into the Postgres span
+5. If asked “how would you do this for real?”: managed Postgres, LaunchDarkly or OpenFeature behind `FlagProvider`, Ingress + TLS, auth, HPA, Grafana Cloud or a proper LGTM stack
 
 ---
 
@@ -407,11 +409,11 @@ todo-listercise/
 | 1 | Cluster tool | kind |
 | 2 | Manifests | Kustomize, not Helm |
 | 3 | Flag storage | Postgres table + in-process cache |
-| 4 | Gated feature | `priorities` on todos |
+| 4 | Gated feature | `priorities` on todos (API); `completed_sparkles` in the SPA |
 | 5 | Collector | Grafana Alloy sidecar on todo-service |
 | 6 | Backends | Prometheus + Tempo (+ Loki later) |
-| 7 | Frontend data | TanStack Query or plain fetch — TBD |
-| 8 | Flag toggle UX | in-app panel (best live demo) |
+| 7 | todo-ui data | TanStack Query for todos |
+| 8 | Flag toggle UX | deferred; SPA reads flags via `FlagProvider`, wires `completed_sparkles` |
 | 9 | Inner loop | Compose Postgres + `uv` on the host |
 | 10 | Auth | none in v1 |
 | 11 | Demo bring-up | `make up` (kind stack, later unit) |

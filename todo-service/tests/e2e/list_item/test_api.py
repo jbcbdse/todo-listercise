@@ -2,6 +2,8 @@ from typing import Any, cast
 
 from httpx import AsyncClient
 
+from todo_listercise.flag.service import FlagKey
+
 
 async def _create(
     client: AsyncClient,
@@ -15,7 +17,10 @@ async def _create(
 
 
 async def _enable_priorities(client: AsyncClient) -> None:
-    response = await client.put("/flags/priorities", json={"enabled": True})
+    response = await client.put(
+        f"/flags/{FlagKey.PRIORITIES}",
+        json={"enabled": True},
+    )
     assert response.status_code == 200
     assert response.json()["enabled"] is True
 
@@ -85,7 +90,7 @@ class TestPriorityFlag:
     async def test_update_keeps_priority_when_off(self, client: AsyncClient) -> None:
         await _enable_priorities(client)
         created = await _create(client, priority=1)
-        await client.put("/flags/priorities", json={"enabled": False})
+        await client.put(f"/flags/{FlagKey.PRIORITIES}", json={"enabled": False})
         ignored = await client.patch(
             f"/todos/{created['id']}",
             json={"priority": 5},
