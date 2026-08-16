@@ -33,4 +33,15 @@ describe("HttpFlagProvider", () => {
     await flags.refresh();
     expect(listener).toHaveBeenCalledTimes(2);
   });
+
+  it("keeps the previous cache when fetch fails", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ key: "alpha", enabled: true }]))
+      .mockRejectedValueOnce(new Error("offline"));
+    const flags = new HttpFlagProvider("/api/flags", 60_000, fetchImpl);
+    await flags.refresh();
+    await flags.refresh();
+    expect(flags.isEnabled("alpha")).toBe(true);
+  });
 });

@@ -42,4 +42,28 @@ test.describe("todos", () => {
       page.getByRole("checkbox", { name: openTitle }),
     ).toHaveCount(0);
   });
+
+  test("sparkles when completed_sparkles is on", async ({ page, request }) => {
+    const enabled = await request.put(
+      "http://localhost:8000/flags/completed_sparkles",
+      { data: { enabled: true } },
+    );
+    expect(enabled.ok()).toBe(true);
+
+    const title = `sparkle-${String(Date.now())}`;
+    const flagsLoaded = page.waitForResponse(
+      (response) => response.url().includes("/api/flags") && response.ok(),
+    );
+    await page.goto("/");
+    await flagsLoaded;
+
+    await page.getByLabel("Title").fill(title);
+    await page.getByRole("button", { name: "Add" }).click();
+    await page.getByRole("checkbox", { name: title }).click();
+    await expect(page.getByTestId("sparkles")).toBeVisible();
+
+    await request.put("http://localhost:8000/flags/completed_sparkles", {
+      data: { enabled: false },
+    });
+  });
 });

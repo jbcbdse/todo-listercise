@@ -73,26 +73,30 @@ export class HttpFlagProvider implements FlagProvider {
   }
 
   async refresh(): Promise<void> {
-    const response = await this.fetchImpl(this.url);
-    if (!response.ok) {
-      return;
-    }
-    const payload: unknown = await response.json();
-    if (!Array.isArray(payload)) {
-      return;
-    }
-    const next = new Map<string, boolean>();
-    for (const row of payload) {
-      if (isFlagRow(row)) {
-        next.set(row.key, row.enabled);
+    try {
+      const response = await this.fetchImpl(this.url);
+      if (!response.ok) {
+        return;
       }
-    }
-    if (mapsEqual(this.cache, next)) {
+      const payload: unknown = await response.json();
+      if (!Array.isArray(payload)) {
+        return;
+      }
+      const next = new Map<string, boolean>();
+      for (const row of payload) {
+        if (isFlagRow(row)) {
+          next.set(row.key, row.enabled);
+        }
+      }
+      if (mapsEqual(this.cache, next)) {
+        return;
+      }
+      this.cache = next;
+      for (const listener of this.listeners) {
+        listener();
+      }
+    } catch {
       return;
-    }
-    this.cache = next;
-    for (const listener of this.listeners) {
-      listener();
     }
   }
 }

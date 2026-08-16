@@ -78,6 +78,51 @@ describe("TodoItem", () => {
     expect(screen.getByTestId("sparkles")).toBeInTheDocument();
   });
 
+  it("does not sparkle when uncompleting", async () => {
+    const flags = new FakeFlagProvider({ [FlagKey.CompletedSparkles]: true });
+    const user = userEvent.setup();
+    renderItem(
+      <TodoItem
+        item={{ ...item, completed: true }}
+        onCompletedChange={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+      flags,
+    );
+    await user.click(screen.getByRole("checkbox", { name: "buy milk" }));
+    expect(screen.queryByTestId("sparkles")).not.toBeInTheDocument();
+  });
+
+  it("does not sparkle when motion is reduced", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      (query: string) =>
+        ({
+          matches: query.includes("prefers-reduced-motion"),
+          media: query,
+          onchange: null,
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          dispatchEvent: vi.fn(),
+        }) satisfies MediaQueryList,
+    );
+    const flags = new FakeFlagProvider({ [FlagKey.CompletedSparkles]: true });
+    const user = userEvent.setup();
+    renderItem(
+      <TodoItem
+        item={item}
+        onCompletedChange={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+      flags,
+    );
+    await user.click(screen.getByRole("checkbox", { name: "buy milk" }));
+    expect(screen.queryByTestId("sparkles")).not.toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
   it("notifies on delete", async () => {
     const onDelete = vi.fn();
     const user = userEvent.setup();
