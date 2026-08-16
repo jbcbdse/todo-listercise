@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from todo_listercise.errors import NotFoundError
-from todo_listercise.flag.service import PRIORITIES_FLAG, FlagLookup
+from todo_listercise.flag.service import FlagKey, FlagLookup
 from todo_listercise.list_item.model import ListItem, Priority
 from todo_listercise.list_item.schemas import (
     ListItemCreate,
@@ -77,6 +77,6 @@ class ListItemService:
         requested: Priority | None,
         existing: int,
     ) -> int:
-        if requested is None or not await self._flags.is_enabled(PRIORITIES_FLAG):
+        if requested is None or not await self._flags.is_enabled(FlagKey.PRIORITIES):
             return existing
         return int(requested)

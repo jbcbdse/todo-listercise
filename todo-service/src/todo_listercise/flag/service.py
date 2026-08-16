@@ -1,3 +1,4 @@
+from enum import StrEnum
 from time import monotonic
 from typing import ClassVar, Protocol
 
@@ -8,7 +9,10 @@ from todo_listercise.errors import NotFoundError
 from todo_listercise.flag.model import Flag
 from todo_listercise.flag.schemas import FlagUpdate
 
-PRIORITIES_FLAG = "priorities"
+
+class FlagKey(StrEnum):
+    PRIORITIES = "priorities"
+    COMPLETED_SPARKLES = "completed_sparkles"
 
 
 class FlagLookup(Protocol):

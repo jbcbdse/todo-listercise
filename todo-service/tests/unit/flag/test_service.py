@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from todo_listercise.errors import NotFoundError
 from todo_listercise.flag.schemas import FlagUpdate
-from todo_listercise.flag.service import FlagService
+from todo_listercise.flag.service import FlagKey, FlagService
 
 
 def _service(flag: object | None) -> tuple[FlagService, MagicMock]:
@@ -19,31 +19,31 @@ def _service(flag: object | None) -> tuple[FlagService, MagicMock]:
 class TestIsEnabled:
     async def test_caches_db_result(self) -> None:
         service, session = _service(MagicMock(enabled=True))
-        assert await service.is_enabled("priorities") is True
-        assert await service.is_enabled("priorities") is True
+        assert await service.is_enabled(FlagKey.PRIORITIES) is True
+        assert await service.is_enabled(FlagKey.PRIORITIES) is True
         session.get.assert_awaited_once()
 
     async def test_missing_flag_is_false(self) -> None:
         service, _session = _service(None)
-        assert await service.is_enabled("priorities") is False
+        assert await service.is_enabled(FlagKey.PRIORITIES) is False
 
     async def test_refetches_after_ttl(self) -> None:
         clock = {"now": 0.0}
         service, session = _service(MagicMock(enabled=True))
         with patch("todo_listercise.flag.service.monotonic", lambda: clock["now"]):
-            await service.is_enabled("priorities")
+            await service.is_enabled(FlagKey.PRIORITIES)
             clock["now"] = FlagService._ttl_seconds + 0.1
-            await service.is_enabled("priorities")
+            await service.is_enabled(FlagKey.PRIORITIES)
         assert session.get.await_count == 2
 
 
 class TestInvalidate:
     async def test_one_key_leaves_others(self) -> None:
         service, session = _service(MagicMock(enabled=True))
-        await service.is_enabled("priorities")
+        await service.is_enabled(FlagKey.PRIORITIES)
         session.get = AsyncMock(return_value=MagicMock(enabled=False))
         await service.is_enabled("other")
-        FlagService.invalidate("priorities")
+        FlagService.invalidate(FlagKey.PRIORITIES)
         session.get.reset_mock()
         assert await service.is_enabled("other") is False
         session.get.assert_not_awaited()
@@ -58,10 +58,10 @@ class TestUpdate:
     async def test_invalidates_cache(self) -> None:
         flag = MagicMock(enabled=False)
         service, session = _service(flag)
-        await service.is_enabled("priorities")
+        await service.is_enabled(FlagKey.PRIORITIES)
         flag.enabled = True
-        await service.update("priorities", FlagUpdate(enabled=True))
+        await service.update(FlagKey.PRIORITIES, FlagUpdate(enabled=True))
         session.get.reset_mock()
         session.get.return_value = flag
-        assert await service.is_enabled("priorities") is True
+        assert await service.is_enabled(FlagKey.PRIORITIES) is True
         session.get.assert_awaited_once()

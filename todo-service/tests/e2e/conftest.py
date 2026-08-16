@@ -41,9 +41,7 @@ async def _reset_state(application: FastAPI) -> None:
         raise TypeError(msg)
     async with database.session() as session:
         await session.execute(text("TRUNCATE TABLE list_item"))
-        await session.execute(
-            text("UPDATE flag SET enabled = false WHERE key = 'priorities'"),
-        )
+        await session.execute(text("UPDATE flag SET enabled = false"))
     FlagService.invalidate()
 
 
