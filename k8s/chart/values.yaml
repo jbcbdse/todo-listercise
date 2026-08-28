@@ -1,0 +1,23 @@
+images:
+  todoService: todo-service:local
+  todoUi: todo-ui:local
+  pullPolicy: Never
+  postgres: postgres:16
+  alloy: grafana/alloy:v1.8.3
+  prometheus: prom/prometheus:v3.2.1
+  tempo: grafana/tempo:2.7.2
+  loki: grafana/loki:3.4.2
+  grafana: grafana/grafana:11.6.11
+
+nodePorts:
+  ui: 30080
+  api: 30000
+  grafana: 30300
+  postgres: 30432
+
+hostPath: /mnt/kind-data
+
+postgres:
+  user: todo
+  password: todo
+  database: todo_listercise

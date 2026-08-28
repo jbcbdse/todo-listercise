@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import logging
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 import structlog
+from opentelemetry import trace
+
+if TYPE_CHECKING:
+    from structlog.typing import EventDict, WrappedLogger
 
 _STD_LEVELS: Final[dict[str, int]] = {
     "debug": logging.DEBUG,
@@ -12,6 +16,19 @@ _STD_LEVELS: Final[dict[str, int]] = {
     "error": logging.ERROR,
     "critical": logging.CRITICAL,
 }
+
+
+def add_trace_context(
+    _logger: WrappedLogger,
+    _method_name: str,
+    event_dict: EventDict,
+) -> EventDict:
+    span = trace.get_current_span()
+    ctx = span.get_span_context()
+    if ctx.is_valid:
+        event_dict["trace_id"] = format(ctx.trace_id, "032x")
+        event_dict["span_id"] = format(ctx.span_id, "016x")
+    return event_dict
 
 
 def configure_logging(log_level: str = "info") -> None:
@@ -27,6 +44,7 @@ def configure_logging(log_level: str = "info") -> None:
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
         timestamper,
+        add_trace_context,
         structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
     ]
     structlog.configure(

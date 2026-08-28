@@ -11,6 +11,7 @@ from todo_listercise.list_item.schemas import (
     ListItemUpdate,
     StatusFilter,
 )
+from todo_listercise.telemetry import get_metrics
 
 
 class ListItemService:
@@ -44,6 +45,7 @@ class ListItemService:
         self._session.add(item)
         await self._session.flush()
         await self._session.refresh(item)
+        get_metrics().todos_created.add(1)
         return item
 
     async def update(self, item_id: UUID, body: ListItemUpdate) -> ListItem:
@@ -52,6 +54,8 @@ class ListItemService:
             item.title = body.title
         if body.completed is not None:
             item.completed = body.completed
+            if body.completed:
+                get_metrics().todos_completed.add(1)
         if body.priority is not None:
             item.priority = await self._priority_for_write(
                 body.priority,
@@ -77,6 +81,7 @@ class ListItemService:
         requested: Priority | None,
         existing: int,
     ) -> int:
-        if requested is None or not await self._flags.is_enabled(FlagKey.PRIORITIES):
+        enabled = await self._flags.is_enabled(FlagKey.PRIORITIES)
+        if requested is None or not enabled:
             return existing
         return int(requested)
