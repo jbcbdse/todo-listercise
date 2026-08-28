@@ -15,6 +15,7 @@ from todo_listercise.flag.router import router as flags_router
 from todo_listercise.health.router import router as health_router
 from todo_listercise.list_item.router import router as list_item_router
 from todo_listercise.logging import configure_logging
+from todo_listercise.telemetry import get_metrics, setup_telemetry
 
 logger = structlog.get_logger("todo_listercise")
 
@@ -42,13 +43,21 @@ class RequestLogMiddleware:
         finally:
             path = scope.get("path", "")
             method = scope.get("method", "")
-            duration_ms = round((perf_counter() - start) * 1000, 2)
+            duration_s = perf_counter() - start
+            if path not in {"/healthz", "/readyz"}:
+                get_metrics().http_server_duration.record(
+                    duration_s,
+                    {
+                        "http.method": method,
+                        "http.status_code": str(status_code),
+                    },
+                )
             logger.info(
                 "request",
                 method=method,
                 path=path,
                 status_code=status_code,
-                duration_ms=duration_ms,
+                duration_ms=round(duration_s * 1000, 2),
             )
 
 
@@ -57,6 +66,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(settings.log_level)
     app.state.database = Database(settings.database_url)
+    setup_telemetry(app, app.state.database.engine, settings)
     yield
     await app.state.database.dispose()
 

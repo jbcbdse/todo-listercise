@@ -5,6 +5,7 @@ __pycache__
 .ruff_cache
 .pytest_cache
 .python-version
+*.egg-info
 tests
 .git
 .gitignore

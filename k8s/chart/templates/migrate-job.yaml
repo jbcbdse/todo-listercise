@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+  labels:
+    {{- include "todo-listercise.labels" . | nindent 4 }}
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: alembic
+          image: {{ .Values.images.todoService }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+                alembic upgrade head && exit 0
+                sleep 2
+              done
+              exit 1
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres
+                  key: DATABASE_URL
