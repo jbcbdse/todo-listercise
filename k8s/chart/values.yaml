@@ -1,3 +1,4 @@
+# Local kind demo only: anonymous Grafana, plaintext postgres, hostPath, NodePorts.
 images:
   todoService: todo-service:local
   todoUi: todo-ui:local

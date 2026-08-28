@@ -44,13 +44,14 @@ class RequestLogMiddleware:
             path = scope.get("path", "")
             method = scope.get("method", "")
             duration_s = perf_counter() - start
-            get_metrics().http_server_duration.record(
-                duration_s,
-                {
-                    "http.method": method,
-                    "http.status_code": str(status_code),
-                },
-            )
+            if path not in {"/healthz", "/readyz"}:
+                get_metrics().http_server_duration.record(
+                    duration_s,
+                    {
+                        "http.method": method,
+                        "http.status_code": str(status_code),
+                    },
+                )
             logger.info(
                 "request",
                 method=method,

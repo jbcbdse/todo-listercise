@@ -17,12 +17,6 @@ datasources:
       tracesToLogsV2:
         datasourceUid: loki
         filterByTraceID: true
-      tracesToMetrics:
-        datasourceUid: prometheus
-      serviceMap:
-        datasourceUid: prometheus
-      nodeGraph:
-        enabled: true
   - name: Loki
     type: loki
     uid: loki

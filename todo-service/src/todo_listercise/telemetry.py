@@ -44,6 +44,21 @@ class AppMetrics:
             "http.server.duration",
             unit="s",
             description="HTTP request duration",
+            explicit_bucket_boundaries_advisory=(
+                0.005,
+                0.01,
+                0.025,
+                0.05,
+                0.075,
+                0.1,
+                0.25,
+                0.5,
+                0.75,
+                1.0,
+                2.5,
+                5.0,
+                10.0,
+            ),
         )
 
 
@@ -87,6 +102,8 @@ def setup_telemetry(app: FastAPI, engine: AsyncEngine, settings: Settings) -> No
     )
     set_logger_provider(logger_provider)
     logging.getLogger().addHandler(LoggingHandler(logger_provider=logger_provider))
+    for name in ("opentelemetry.exporter", "opentelemetry.sdk"):
+        logging.getLogger(name).propagate = False
 
     FastAPIInstrumentor.instrument_app(app)
     SQLAlchemyInstrumentor().instrument(engine=engine.sync_engine)

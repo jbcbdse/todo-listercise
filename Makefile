@@ -7,6 +7,7 @@ DOCKER ?= docker
 KIND_DATA := $(CURDIR)/.kind-data
 KIND_NODE := $(CLUSTER)-control-plane
 
+.NOTPARALLEL:
 .PHONY: up down cluster images load apply wait urls check-ports
 
 up: check-ports cluster images load apply wait urls
@@ -49,11 +50,12 @@ load:
 apply:
 	-$(KUBECTL) -n $(NS) delete job migrate --ignore-not-found
 	$(HELM) upgrade --install $(CLUSTER) k8s/chart --namespace $(NS) --create-namespace
+	$(KUBECTL) -n $(NS) rollout restart deploy/todo-service deploy/todo-ui
 
 wait:
-	$(KUBECTL) -n $(NS) rollout status statefulset/postgres --timeout=180s
-	$(KUBECTL) -n $(NS) wait --for=condition=complete job/migrate --timeout=180s
-	$(KUBECTL) -n $(NS) wait --for=condition=available deploy/todo-service deploy/todo-ui deploy/grafana deploy/prometheus deploy/tempo deploy/loki --timeout=180s
+	$(KUBECTL) -n $(NS) rollout status statefulset/postgres --timeout=300s
+	$(KUBECTL) -n $(NS) wait --for=condition=complete job/migrate --timeout=300s
+	$(KUBECTL) -n $(NS) wait --for=condition=available deploy/todo-service deploy/todo-ui deploy/grafana deploy/prometheus deploy/tempo deploy/loki --timeout=300s
 
 urls:
 	@echo ""
