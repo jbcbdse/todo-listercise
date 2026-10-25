@@ -11,7 +11,7 @@ Compose (inner) and kind (demo) are mutually exclusive on this laptop. They do n
 | Loop | Command | When |
 |---|---|---|
 | Inner | Compose Postgres + `uv` API + Vite | Daily service/UI work |
-| Demo | `sg docker -c 'make up'` | Full kind stack |
+| Demo | `make up` | Full kind stack |
 
 | Port | Inner loop | kind (`make up`) |
 |---|---|---|
@@ -26,11 +26,13 @@ Stop uvicorn before `make up` (`:8000`). `make down` before using Vite + Compose
 
 ## Demo loop (kind)
 
-Requires Docker, kind, kubectl, and Helm. On this machine, wrap with `sg docker`:
+Requires Docker, kind, kubectl, and Helm. Your user must be in the `docker` group.
 
 ```bash
-sg docker -c 'make up'
+make up
 ```
+
+If your shell has not picked up the `docker` group yet, run `sg docker -c 'make up'` instead.
 
 `make up` creates the cluster if needed, builds and loads images, installs the Helm chart, waits until Ready, and prints URLs. It fails fast if `5432` / `8000` / `8080` / `3000` are already bound.
 
@@ -46,7 +48,7 @@ Postgres, Prometheus, Tempo, Loki, and Grafana store data in `.kind-data/` on th
 Cluster-internal only (not opened in a browser): Alloy sidecar `localhost:4318` in the app pod, Prometheus `prometheus:9090`, Tempo `tempo:4317`, Loki `loki:3100`.
 
 ```bash
-sg docker -c 'make down'   # deletes the kind cluster; keeps .kind-data/
+make down   # deletes the kind cluster; keeps .kind-data/
 ```
 
 Demo beat: `make up` → UI → create/complete a todo → Grafana Explore for logs, metrics, and traces.
