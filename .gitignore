@@ -36,3 +36,6 @@ Thumbs.db
 .idea/
 *.swp
 *~
+
+# kind host mounts (postgres + telemetry); survives make down
+.kind-data/

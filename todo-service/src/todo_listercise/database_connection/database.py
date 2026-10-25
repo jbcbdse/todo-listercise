@@ -34,3 +34,7 @@ class Database:
 
     async def dispose(self) -> None:
         await self._engine.dispose()
+
+    @property
+    def engine(self) -> AsyncEngine:
+        return self._engine

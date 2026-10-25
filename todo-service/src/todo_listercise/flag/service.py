@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from todo_listercise.errors import NotFoundError
 from todo_listercise.flag.model import Flag
 from todo_listercise.flag.schemas import FlagUpdate
+from todo_listercise.telemetry import get_metrics
 
 
 class FlagKey(StrEnum):
@@ -27,6 +28,7 @@ class FlagService:
         self._session = session
 
     async def is_enabled(self, key: str) -> bool:
+        get_metrics().flag_evaluations.add(1, {"flag": key})
         cached = self._read_cache(key)
         if cached is not None:
             return cached

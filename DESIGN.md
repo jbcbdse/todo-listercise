@@ -71,25 +71,27 @@ Browser
                                   └─ evaluates flags from DB
 
 kind cluster
-  todo-ui           Deployment + Service
-  todo-service      Deployment (app + Alloy sidecar) + Service
-  postgres          StatefulSet + PVC + Service
+  todo-ui           Deployment + Service (NodePort :8080)
+  todo-service      Deployment (app + Alloy sidecar) + Service (NodePort :8000)
+  postgres          StatefulSet + hostPath + Service (NodePort :5432)
   prometheus        Deployment + Service   # metrics store
   tempo             Deployment + Service   # trace store
-  grafana           Deployment + Service   # UI over both
+  loki              Deployment + Service   # log store
+  grafana           Deployment + Service (NodePort :3000)
 ```
 
-These three are the observability backends. They do not serve todos. Alloy (sidecar on `todo-service`) is the only process that talks to the app; it writes metrics into Prometheus and traces into Tempo. Grafana is the browser UI that reads from both.
+These four are the observability backends. They do not serve todos. Alloy (sidecar on `todo-service`) is the only process that talks to the app; it writes metrics into Prometheus, traces into Tempo, and logs into Loki. Grafana is the browser UI that reads from all three.
 
 | Service | Stores | Answers | This cluster |
 |---|---|---|---|
-| **Prometheus** | Time-series metrics (numbers over time) | How many? How slow? How broken? | Scrapes / receives samples; PromQL |
+| **Prometheus** | Time-series metrics (numbers over time) | How many? How slow? How broken? | Receives OTLP from Alloy; PromQL |
 | **Tempo** | Traces (one request’s span tree) | What happened inside *this* `POST /todos`? | Receives OTLP from Alloy |
-| **Grafana** | Almost nothing (dashboards + datasource config) | Show me the graph / the trace | Port-forward `:3000` |
+| **Loki** | Logs | What did this request print? | Receives OTLP logs from Alloy |
+| **Grafana** | Almost nothing (dashboards + datasource config) | Show me the graph / the trace / the logs | NodePort `:3000` |
 
-**Deployment + Service** for all three: one replica, a stable DNS name (`prometheus:9090`, `tempo:4317`, `grafana:3000`). No StatefulSet — local demo data can live on `emptyDir` and disappear when the pod does. Humans only open Grafana; Prometheus and Tempo stay cluster-internal.
+**Deployment + Service** for Prometheus, Tempo, Loki, and Grafana: one replica, a stable DNS name (`prometheus:9090`, `tempo:4317`, `loki:3100`, `grafana:3000`). Data dirs are kind `extraMounts` of repo `.kind-data/` (hostPath), so `make down` / `make up` keeps Postgres and telemetry. `rm -rf .kind-data` wipes it. Humans open Grafana, the UI, and DBeaver; Prometheus, Tempo, Loki, and Alloy stay cluster-internal.
 
-One namespace, e.g. `todo-listercise`. Ingress or a simple port-forward script for local access.
+One namespace: `todo-listercise`. Laptop access is kind extraPortMappings + NodePort (UI `:8080`, API `:8000`, Grafana `:3000`, Postgres `:5432`).
 
 **Why this shape**
 
@@ -103,7 +105,7 @@ One namespace, e.g. `todo-listercise`. Ingress or a simple port-forward script f
 
 Python 3.12 (pinned), FastAPI, SQLAlchemy 2.x (async) + asyncpg, Pydantic v2, Alembic for migrations. Package lives in `todo-service/`, managed with `uv` and a lockfile.
 
-**Inner loop** is Compose (Postgres) + `uv` on the host. **Demo loop** is `make up` (kind) — later units; this service’s production Dockerfile and env config are the hooks.
+**Inner loop** is Compose (Postgres on host `:5433`) + `uv` on the host. **Demo loop** is `make up` (kind).
 
 ### 4.1 HTTP surface
 
@@ -128,7 +130,7 @@ Keep the API boring. The interesting parts are flag evaluation, instrumentation,
 
 ### 4.3 Config
 
-12-factor: `DATABASE_URL`, `LOG_LEVEL` from env (OTLP later). In-cluster these come from a ConfigMap / Secret. No `.env` committed. Logs are JSON on stdout (structlog) so Loki/Grafana can parse them later.
+12-factor: `DATABASE_URL`, `LOG_LEVEL`, optional `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_SERVICE_NAME` from env. Unset OTLP endpoint → exporters are no-ops (inner loop). In-cluster the app sends OTLP HTTP to the Alloy sidecar at `http://127.0.0.1:4318`. Logs are JSON on stdout (structlog) with `trace_id` / `span_id` injected, and also exported over OTLP so Loki can show them without a DaemonSet.
 
 ### 4.4 Decisions (locked)
 
@@ -139,7 +141,7 @@ Keep the API boring. The interesting parts are flag evaluation, instrumentation,
 
 ## 5. todo-ui (React / TypeScript)
 
-Vite + React + TypeScript SPA in `todo-ui/`. Inner loop: Vite on `:5173` proxies `/api` to uvicorn. Later, the kind image is static `dist/` behind nginx (not this unit).
+Vite + React + TypeScript SPA in `todo-ui/`. Inner loop: Vite on `:5173` proxies `/api` to uvicorn. Kind image: static `dist/` behind nginx (`try_files` + `/api/` proxy to `todo-service:8000`).
 
 **Screens:** one page. Add / list / complete / delete todos, plus a status filter. Completing a todo sparkles when `completed_sparkles` is on. No flag admin UI. `priorities` is not wired in the SPA yet.
 
@@ -202,7 +204,7 @@ list_item
 
 **Why keep `priority` even when the flag is off:** flag-off should not require a migration or destroy data. That is a realistic flag lesson.
 
-**In cluster:** official Postgres image, StatefulSet, 1Gi PVC, credentials from a Secret. No HA, no replicas. `kind` + a hostPath/local PV is enough.
+**In cluster:** official Postgres image, StatefulSet, credentials from a Secret. Data is a hostPath under `.kind-data/postgres` (kind extraMount), not a PVC, so it survives `kind delete cluster`. No HA, no replicas.
 
 **Migrations:** Alembic runs as a Kubernetes Job (or an init container) before the API becomes Ready. Prefer a Job so a crash is visible as a failed Job, not a CrashLooping API.
 
@@ -217,25 +219,26 @@ list_item
 **Cluster**
 
 - One control-plane node is enough
-- Extra port mappings so we can hit Grafana and the app without remembering random NodePorts, *or* a tiny `just`/`make` wrapper that `kubectl port-forward`s
+- kind `extraPortMappings` + NodePort so laptop URLs stay up after `make up` exits (no long-running `kubectl port-forward`)
 
 **Workloads**
 
 | Workload | Kind | Notes |
 |---|---|---|
-| `todo-ui` | Deployment, 1 replica | nginx serving the SPA + `/api` proxy |
-| `todo-service` | Deployment, 1 replica | FastAPI + Alloy sidecar |
-| `postgres` | StatefulSet, 1 replica | PVC |
-| `prometheus` | Deployment | scrape Alloy / app metrics |
-| `tempo` | Deployment | receive OTLP traces |
-| `grafana` | Deployment | provisioned datasource + one dashboard |
+| `todo-ui` | Deployment, 1 replica | nginx serving the SPA + `/api` proxy; NodePort `:8080` |
+| `todo-service` | Deployment, 1 replica | FastAPI + Alloy sidecar; NodePort `:8000` |
+| `postgres` | StatefulSet, 1 replica | hostPath `.kind-data/postgres`; NodePort `:5432` for DBeaver |
+| `prometheus` | Deployment | OTLP / remote-write receiver; hostPath `.kind-data/prometheus` |
+| `tempo` | Deployment | receive OTLP traces; hostPath `.kind-data/tempo` |
+| `loki` | Deployment | receive OTLP logs; hostPath `.kind-data/loki` |
+| `grafana` | Deployment | provisioned datasources + one dashboard; NodePort `:3000`; hostPath `.kind-data/grafana` |
 
 **Probes**
 
 - todo-ui: nginx `/`
 - todo-service liveness: `/healthz`
 - todo-service readiness: `/readyz` (Postgres ping)
-- Alloy: its own `/ready` if we expose it
+- Alloy: `/-/ready` on the sidecar HTTP port
 
 **Images**
 
@@ -243,9 +246,9 @@ list_item
 - Backend: distroless or slim Python
 - todo-ui: multi-stage `node` build → `nginx:alpine`
 
-**Manifests:** raw YAML in `k8s/`, Kustomize overlay `k8s/overlays/kind`. Helm is optional and probably noise for this size.
+**Manifests:** Helm chart in `k8s/chart/` (`values.yaml` is the kind NodePorts / images / hostPaths). `make up` runs `helm upgrade --install`. kind cluster config is `k8s/kind/cluster.yaml`.
 
-**Discuss:** kind vs k3d; Kustomize vs Helm; Ingress (nginx/contour) vs port-forward.
+**Discuss:** kind vs k3d; Helm vs Kustomize; Ingress (nginx/contour) vs NodePort. Locked for this repo: kind, Helm, NodePort.
 
 ---
 
@@ -259,7 +262,7 @@ Three signals, one UI.
 
 - Traces: incoming FastAPI request → SQLAlchemy spans
 - Metrics: request count/latency/errors (RED), plus app counters `todos_created`, `todos_completed`, `flag_evaluations`
-- Logs: structured JSON to stdout (`request_id` / `trace_id` injected)
+- Logs: structured JSON to stdout (`trace_id` / `span_id` injected) and OTLP export to Alloy → Loki
 
 **todo-ui (optional v1)**
 
@@ -270,9 +273,10 @@ Three signals, one UI.
 Grafana Alloy in the todo-service pod:
 
 - receives OTLP from the app on localhost (no cluster DNS hop for the app)
-- tails the app’s stdout *or* we just use the container runtime and scrape logs separately
 - remote-writes metrics to Prometheus
 - forwards traces to Tempo
+- forwards logs to Loki
+- ready probe on `/-/ready`
 
 This is the “Grafana sidecar”: Alloy, not the Grafana UI. Putting Grafana itself in the app pod would be unusual and would couple dashboards to app restarts.
 
@@ -284,10 +288,10 @@ It does **not** store request bodies, SQL, or “what this one call did.” That
 
 **In this app**
 
-- Alloy remote-writes (or Prometheus scrapes) RED metrics plus the custom counters
+- Alloy remote-writes (OTLP HTTP to Prometheus `/api/v1/otlp`) RED metrics plus the custom counters
 - One scrape/remote-write interval is enough (15s)
 - Retention: default / short. A laptop demo does not need weeks of history
-- Image: official `prom/prometheus`. Config is a ConfigMap (`scrape_configs` or a remote-write receive setup — decide when we wire Alloy)
+- Image: official `prom/prometheus`. Config is a ConfigMap (OTLP receiver enabled)
 
 **Why not skip it and only use Tempo:** a trace is one request. A dashboard that shows “creates per minute” needs a metrics store.
 
@@ -308,23 +312,24 @@ It does **not** do PromQL or long-term numeric aggregates. It answers “show me
 
 ### 9.4 Grafana — the UI
 
-Grafana is the frontend for the other two. It does not ingest telemetry from the app. It has *datasources* (Prometheus, Tempo) and *dashboards* (JSON we ship in `observability/`).
+Grafana is the frontend for the other three. It does not ingest telemetry from the app. It has *datasources* (Prometheus, Tempo, Loki) and *dashboards* (JSON we ship in `k8s/chart/files/`).
 
 **In this app**
 
-- Provision datasources and one dashboard at startup (ConfigMap → sidecar or Grafana provisioning dir)
-- Dashboard: request rate, p95, errors, todo counters, and a link into Tempo for recent traces
-- Anonymous Viewer, no login, port-forward `:3000`
+- Provision datasources and one dashboard at startup (ConfigMap → Grafana provisioning dir)
+- Dashboard: request rate, p95, errors, todo counters, and recent logs
+- Anonymous Editor, no login, NodePort `:3000` (Explore works without a password)
 - Image: official `grafana/grafana`
+- Derived field: log `trace_id` → Tempo
 
 Trace → metrics: Grafana can jump from a spike on `todos_created` to traces in the same time window (exemplars later if we want; not required for v1).
 
-Trace → log correlation if we include `trace_id` in log lines. Loki is a nice add if log search comes up in conversation; not required to claim “observability.” Loki would be a fourth Deployment (log store), same pattern as Tempo.
+Trace → log correlation via `trace_id` in log lines. Loki is a fourth Deployment (log store), same pattern as Tempo.
 
 ### 9.5 What a demo looks like
 
 1. Create a todo in the UI
-2. Grafana: spike on `todos_created`, a trace named `POST /todos` with a SQL span
+2. Grafana: spike on `todos_created`, a trace named `POST /todos` with a SQL span, logs with that `trace_id`
 3. Flip `completed_sparkles`, complete a todo (sparkles)
 4. Grafana: `flag_evaluations` / a `PUT /flags/completed_sparkles` trace
 
@@ -332,34 +337,32 @@ Trace → log correlation if we include `trace_id` in log lines. Loki is a nice 
 
 - Alloy sidecar vs cluster-level OTel Collector Deployment (sidecar is the story you asked for; a collector Deployment is more “production”)
 - Prometheus+Tempo vs Grafana Cloud (local-only wins for a laptop demo)
-- Loki or not
+- Loki: in (OTLP from Alloy; Explore + dashboard logs panel)
 - Instrument todo-ui or keep telemetry server-side
 
 ---
 
 ## 10. Local workflow
 
-Two loops, one end-goal.
+Two loops, mutually exclusive on host ports `8000` (uvicorn vs API NodePort). Compose Postgres uses `:5433`; kind DBeaver uses `:5432`.
 
-**Demo (later):** one command brings up the full kind stack.
-
-```text
-make up          # kind create (if needed) + build + load + apply + ports
-```
-
-Equivalent pieces, still the target:
+**Demo:** one command brings up the full kind stack. On this machine, Docker/kind need `sg docker`:
 
 ```text
-make cluster     # kind create, if needed
-make images      # docker build todo-ui + todo-service
-make load        # kind load docker-image
-make apply       # kubectl apply -k k8s/overlays/kind
-make ports       # port-forward app :8080 and grafana :3000
+sg docker -c 'make up'     # kind create (if needed) + build + load + apply + wait
+sg docker -c 'make down'   # delete the kind cluster (keeps .kind-data/)
 ```
 
-App at `http://localhost:8080`, Grafana at `http://localhost:3000` (anonymous viewer, no login theater).
+`make up` fails fast if `5432` / `8000` / `8080` / `3000` are already bound. Stop uvicorn before demo; `make down` before Vite + Compose if you need `:8000` again. Postgres and telemetry live in `.kind-data/` on the laptop and survive cluster delete.
 
-**Inner loop (this unit):** Compose runs Postgres only. The API runs on the host under `uv`.
+| What | Laptop URL |
+|---|---|
+| Frontend UI | http://localhost:8080 |
+| Backend API | http://localhost:8000 |
+| Grafana | http://localhost:3000 |
+| Postgres (DBeaver) | `localhost:5432` (db `todo_listercise`, user/password `todo`) |
+
+**Inner loop:** Compose runs Postgres only (host `:5433`). The API runs on the host under `uv`.
 
 ```text
 docker compose up -d postgres
@@ -379,13 +382,12 @@ todo-listercise/
   DESIGN.md
   README.md
   docker-compose.yml
-  todo-service/     FastAPI app, Alembic, Dockerfile
-  todo-ui/          Vite React TS, Dockerfile   (later)
+  Makefile            `make up` / `make down`
+  todo-service/       FastAPI app, Alembic, Dockerfile
+  todo-ui/            Vite React TS, nginx Dockerfile
   k8s/
-    base/
-    overlays/kind/
-  observability/    Grafana dashboard JSON, Alloy config
-  Makefile          `make up` (later)
+    kind/cluster.yaml
+    chart/            Helm chart (templates + values.yaml + files/)
 ```
 
 ---
@@ -397,7 +399,7 @@ todo-listercise/
 1. `kubectl get pods -n todo-listercise` — everything Running, two containers on `todo-service` (app + alloy)
 2. Open the app, add/complete a todo
 3. Complete a todo; `PUT /flags/completed_sparkles` on; complete another and see sparkles. `priorities` still API-only.
-4. Grafana dashboard + one trace drilled into the Postgres span
+4. Grafana dashboard + Explore (metrics, Loki logs, Tempo trace into the Postgres span)
 5. If asked “how would you do this for real?”: managed Postgres, LaunchDarkly or OpenFeature behind `FlagProvider`, Ingress + TLS, auth, HPA, Grafana Cloud or a proper LGTM stack
 
 ---
@@ -407,16 +409,16 @@ todo-listercise/
 | # | Topic | Current proposal |
 |---|---|---|
 | 1 | Cluster tool | kind |
-| 2 | Manifests | Kustomize, not Helm |
+| 2 | Manifests | Helm chart (`k8s/chart`), not Kustomize |
 | 3 | Flag storage | Postgres table + in-process cache |
 | 4 | Gated feature | `priorities` on todos (API); `completed_sparkles` in the SPA |
 | 5 | Collector | Grafana Alloy sidecar on todo-service |
-| 6 | Backends | Prometheus + Tempo (+ Loki later) |
+| 6 | Backends | Prometheus + Tempo + Loki |
 | 7 | todo-ui data | TanStack Query for todos |
 | 8 | Flag toggle UX | deferred; SPA reads flags via `FlagProvider`, wires `completed_sparkles` |
-| 9 | Inner loop | Compose Postgres + `uv` on the host |
+| 9 | Inner loop | Compose Postgres (`:5433`) + `uv` on the host |
 | 10 | Auth | none in v1 |
-| 11 | Demo bring-up | `make up` (kind stack, later unit) |
+| 11 | Demo bring-up | `make up` (kind + NodePort; no long-running port-forward) |
 
 ---
 
